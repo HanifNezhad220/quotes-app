@@ -1,5 +1,5 @@
 // Generate realistic intraday price data
-function genIntraday(open, volatility, trend, points = 80) {
+export function genIntraday(open, volatility, trend, points = 80) {
   const data = [];
   let price = open;
   for (let i = 0; i < points; i++) {
@@ -12,7 +12,7 @@ function genIntraday(open, volatility, trend, points = 80) {
   return data;
 }
 
-function genSparkline(open, end, points = 20) {
+export function genSparkline(open, end, points = 20) {
   const data = [];
   for (let i = 0; i < points; i++) {
     const t = i / (points - 1);
@@ -385,6 +385,38 @@ export const mockPositions = [
     ],
   },
 ];
+
+export function createMockStock(ticker) {
+  const price = parseFloat((50 + Math.random() * 450).toFixed(2));
+  const change = parseFloat(((Math.random() - 0.5) * 6).toFixed(2));
+  const open = parseFloat((price * (1 + change / 100)).toFixed(2));
+  return {
+    ticker: ticker.toUpperCase(),
+    name: ticker.toUpperCase(),
+    fullName: ticker.toUpperCase(),
+    exchange: "NASDAQ · USD",
+    price,
+    change,
+    atClose: price,
+    atCloseChange: change,
+    preMarket: parseFloat((price * 1.002).toFixed(2)),
+    preMarketChange: 0.2,
+    open,
+    high: parseFloat((open * 1.005).toFixed(2)),
+    low: parseFloat((price * 0.995).toFixed(2)),
+    vol: "—",
+    pe: "—",
+    mktCap: "—",
+    wkHigh52: "—",
+    wkLow52: "—",
+    avgVol: "—",
+    yield: "—",
+    beta: "—",
+    eps: "—",
+    chartData: genIntraday(open, price * 0.008, change > 0 ? 0.03 : -0.03),
+    sparkline: genSparkline(open, price),
+  };
+}
 
 export const newsArticles = [
   {

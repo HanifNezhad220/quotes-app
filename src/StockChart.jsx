@@ -11,7 +11,7 @@ import {
 import { newsArticles } from "./data";
 import PositionsPanel from "./PositionsPanel";
 
-const SECTIONS = ["Market Depth", "Positions & Bots", "Options Chain", "Underlying"];
+const SECTIONS = ["Market Depth", "Positions & Bots", "Gamma Exposure (GEX)"];
 const PERIODS = ["1D", "1W", "1M", "3M", "6M", "YTD", "1Y", "2Y", "5Y", "10Y", "ALL"];
 
 function genDepthData(mid) {
@@ -30,6 +30,42 @@ function genDepthData(mid) {
     asks.push({ price: +(mid + i * step).toFixed(2), ask: +askCum.toFixed(0) });
   }
   return [...bids, { price: +mid.toFixed(2), bid: 0, ask: 0 }, ...asks];
+}
+
+function genVolumeData(mid) {
+  const levels = 28;
+  const step = mid * 0.0008;
+  const puts = [];
+  let putCum = 0;
+  for (let i = levels; i >= 1; i--) {
+    putCum += Math.random() * 800 + 100;
+    puts.unshift({ price: +(mid - i * step).toFixed(2), put_vol: +putCum.toFixed(0) });
+  }
+  const calls = [];
+  let callCum = 0;
+  for (let i = 1; i <= levels; i++) {
+    callCum += Math.random() * 800 + 100;
+    calls.push({ price: +(mid + i * step).toFixed(2), call_vol: +callCum.toFixed(0) });
+  }
+  return [...puts, { price: +mid.toFixed(2), put_vol: 0, call_vol: 0 }, ...calls];
+}
+
+function genOIData(mid) {
+  const levels = 28;
+  const step = mid * 0.0008;
+  const puts = [];
+  let putCum = 0;
+  for (let i = levels; i >= 1; i--) {
+    putCum += Math.random() * 2000 + 300;
+    puts.unshift({ price: +(mid - i * step).toFixed(2), put_oi: +putCum.toFixed(0) });
+  }
+  const calls = [];
+  let callCum = 0;
+  for (let i = 1; i <= levels; i++) {
+    callCum += Math.random() * 2000 + 300;
+    calls.push({ price: +(mid + i * step).toFixed(2), call_oi: +callCum.toFixed(0) });
+  }
+  return [...puts, { price: +mid.toFixed(2), put_oi: 0, call_oi: 0 }, ...calls];
 }
 
 function StatRow({ items }) {
@@ -58,42 +94,157 @@ const CustomTooltip = ({ active, payload }) => {
   return null;
 };
 
-const DepthTooltip = ({ active, payload }) => {
+
+const METRIC_CONFIG = {
+  bid_ask:       { left: "bid",     right: "ask",      leftLabel: "Bid",      rightLabel: "Ask"      },
+  volume:        { left: "put_vol", right: "call_vol",  leftLabel: "Put Vol",  rightLabel: "Call Vol"  },
+  open_interest: { left: "put_oi",  right: "call_oi",   leftLabel: "Put OI",   rightLabel: "Call OI"   },
+};
+
+const DepthTooltipMetric = ({ active, payload, metric }) => {
   if (!active || !payload?.length) return null;
   const d = payload[0]?.payload;
-  const side = d.bid > 0 ? "Bid" : d.ask > 0 ? "Ask" : null;
-  const vol = d.bid > 0 ? d.bid : d.ask;
+  const cfg = METRIC_CONFIG[metric];
+  const side = d[cfg.left] > 0 ? cfg.leftLabel : d[cfg.right] > 0 ? cfg.rightLabel : null;
+  const vol = d[cfg.left] > 0 ? d[cfg.left] : d[cfg.right];
   if (!side) return null;
+  const isLeft = side === cfg.leftLabel;
   return (
     <div className="chart-tooltip">
-      <span style={{ color: side === "Bid" ? "#30d158" : "#ff453a" }}>{side}</span>
-      <span style={{ marginLeft: 6 }}>{vol}</span>
+      <span style={{ color: isLeft ? "#30d158" : "#ff453a" }}>{side}</span>
+      <span style={{ marginLeft: 6 }}>{vol?.toLocaleString()}</span>
     </div>
   );
 };
 
-function DepthChart({ data }) {
+function DepthChart({ data, metric = "bid_ask" }) {
+  const cfg = METRIC_CONFIG[metric];
   return (
     <div className="trading-chart-area">
       <ResponsiveContainer width="100%" height={200}>
         <AreaChart data={data} margin={{ top: 4, right: 8, bottom: 0, left: 0 }}>
           <defs>
-            <linearGradient id="bidGrad" x1="0" y1="0" x2="0" y2="1">
+            <linearGradient id="leftGrad" x1="0" y1="0" x2="0" y2="1">
               <stop offset="5%" stopColor="#30d158" stopOpacity={0.25} />
               <stop offset="95%" stopColor="#30d158" stopOpacity={0} />
             </linearGradient>
-            <linearGradient id="askGrad" x1="0" y1="0" x2="0" y2="1">
+            <linearGradient id="rightGrad" x1="0" y1="0" x2="0" y2="1">
               <stop offset="5%" stopColor="#ff453a" stopOpacity={0.25} />
               <stop offset="95%" stopColor="#ff453a" stopOpacity={0} />
             </linearGradient>
           </defs>
           <XAxis dataKey="price" tick={{ fill: "#636366", fontSize: 10 }} tickLine={false} axisLine={false} interval={7} tickFormatter={(v) => `$${v}`} />
           <YAxis tick={{ fill: "#636366", fontSize: 10 }} tickLine={false} axisLine={false} width={36} orientation="right" />
-          <Tooltip content={<DepthTooltip />} cursor={{ stroke: "#636366", strokeWidth: 1 }} />
-          <Area type="stepAfter" dataKey="bid" stroke="#30d158" strokeWidth={1.5} fill="url(#bidGrad)" dot={false} connectNulls={false} activeDot={{ r: 3, fill: "#30d158", strokeWidth: 0 }} />
-          <Area type="stepBefore" dataKey="ask" stroke="#ff453a" strokeWidth={1.5} fill="url(#askGrad)" dot={false} connectNulls={false} activeDot={{ r: 3, fill: "#ff453a", strokeWidth: 0 }} />
+          <Tooltip content={<DepthTooltipMetric metric={metric} />} cursor={{ stroke: "#636366", strokeWidth: 1 }} />
+          <Area type="stepAfter" dataKey={cfg.left}  stroke="#30d158" strokeWidth={1.5} fill="url(#leftGrad)"  dot={false} connectNulls={false} activeDot={{ r: 3, fill: "#30d158", strokeWidth: 0 }} />
+          <Area type="stepBefore" dataKey={cfg.right} stroke="#ff453a" strokeWidth={1.5} fill="url(#rightGrad)" dot={false} connectNulls={false} activeDot={{ r: 3, fill: "#ff453a", strokeWidth: 0 }} />
         </AreaChart>
       </ResponsiveContainer>
+    </div>
+  );
+}
+
+// ── GEX Table ────────────────────────────────────────────────────────────────
+
+function getStrikeStep(price) {
+  if (price > 1000) return 10;
+  if (price > 500)  return 5;
+  if (price > 200)  return 2.5;
+  if (price > 50)   return 1;
+  return 0.5;
+}
+
+const EXPIRATIONS = [
+  { key: "2026-03-20", label: "Mar 20", type: "Weekly" },
+  { key: "2026-03-27", label: "Mar 27", type: "Weekly" },
+  { key: "2026-04-03", label: "Apr 03", type: "Weekly" },
+  { key: "2026-04-17", label: "Apr 17", type: "Monthly" },
+  { key: "2026-04-24", label: "Apr 24", type: "Weekly" },
+  { key: "2026-05-15", label: "May 15", type: "Monthly" },
+  { key: "2026-06-19", label: "Jun 19", type: "Monthly" },
+  { key: "2026-09-18", label: "Sep 18", type: "Monthly" },
+];
+
+function genGEXMatrix(mid) {
+  const step = getStrikeStep(mid);
+  const atm = Math.round(mid / step) * step;
+  const strikes = Array.from({ length: 13 }, (_, i) =>
+    parseFloat((atm + (6 - i) * step).toFixed(2)) // highest at top
+  );
+  const matrix = {};
+  let maxAbs = 0;
+  strikes.forEach((strike) => {
+    matrix[strike] = {};
+    EXPIRATIONS.forEach(({ key }) => {
+      const base = (Math.random() - 0.5) * 5;
+      const spike = Math.random() < 0.1 ? (Math.random() - 0.5) * 22 : 0;
+      const val = parseFloat((base + spike).toFixed(2));
+      matrix[strike][key] = val;
+      if (Math.abs(val) > maxAbs) maxAbs = Math.abs(val);
+    });
+  });
+  return { strikes, matrix, maxAbs };
+}
+
+function cellBg(value, maxAbs, heatmap) {
+  if (value === 0) return "transparent";
+  const t = Math.min(Math.abs(value) / maxAbs, 1);
+  const alpha = heatmap ? 0.15 + t * 0.75 : 0.08 + t * 0.55;
+  return value > 0
+    ? `rgba(90, 148, 175, ${alpha.toFixed(2)})`
+    : `rgba(255, 69, 58, ${alpha.toFixed(2)})`;
+}
+
+function GEXTable({ mid }) {
+  const { strikes, matrix, maxAbs } = useMemo(() => genGEXMatrix(mid), [mid]);
+  const atmStrike = useMemo(() => {
+    const step = getStrikeStep(mid);
+    return parseFloat((Math.round(mid / step) * step).toFixed(2));
+  }, [mid]);
+
+  return (
+    <div className="gex-wrap">
+      <div className="gex-toolbar">
+        <div className="gex-legend">
+          <span className="gex-legend__pos">▲ Call dominated</span>
+          <span className="gex-legend__neg">▼ Put dominated</span>
+        </div>
+      </div>
+
+      <div className="gex-table-wrap">
+        <table className="gex-table">
+          <thead>
+            <tr>
+              <th className="gex-th gex-th--strike">Strike</th>
+              {EXPIRATIONS.map(({ key, label, type }) => (
+                <th key={key} className="gex-th">
+                  <span className="gex-exp-label">{label}</span>
+                  <span className="gex-exp-type">{type}</span>
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {strikes.map((strike) => {
+              const isATM = strike === atmStrike;
+              return (
+                <tr key={strike} className={`gex-tr ${isATM ? "gex-tr--atm" : ""}`}>
+                  <td className="gex-td gex-td--strike">{strike.toLocaleString("en-US")}</td>
+                  {EXPIRATIONS.map(({ key }) => {
+                    const val = matrix[strike][key];
+                    return (
+                      <td key={key} className="gex-td" style={{ background: cellBg(val, maxAbs, false) }}>
+                        {val.toFixed(2)}
+                      </td>
+                    );
+                  })}
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      <div className="gex-footnote">Values in $ millions · Net GEX = Calls − Puts · Dummy data</div>
     </div>
   );
 }
@@ -120,18 +271,22 @@ export default function StockChart({ stock }) {
   const [period, setPeriod] = useState("1D");
   const [section, setSection] = useState("Market Depth");
   const [chartView, setChartView] = useState("options");
+  const [depthMetric, setDepthMetric] = useState("bid_ask");
 
-  const optionsDepthData = useMemo(
-    () => genDepthData(stock?.atClose ?? 100),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [stock?.ticker]
-  );
+  const mid = stock?.atClose ?? 100;
 
-  const underlyingDepthData = useMemo(
-    () => genDepthData(stock?.atClose ?? 100),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [stock?.ticker]
-  );
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const optionsBidAsk   = useMemo(() => genDepthData(mid),   [stock?.ticker]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const optionsVolume   = useMemo(() => genVolumeData(mid),  [stock?.ticker]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const optionsOI       = useMemo(() => genOIData(mid),      [stock?.ticker]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const underlyingDepthData = useMemo(() => genDepthData(mid), [stock?.ticker]);
+
+  const optionsDataMap = { bid_ask: optionsBidAsk, volume: optionsVolume, open_interest: optionsOI };
+  const depthData = chartView === "options" ? optionsDataMap[depthMetric] : underlyingDepthData;
+  const activeMetric = chartView === "options" ? depthMetric : "bid_ask";
 
   if (!stock) return null;
 
@@ -139,7 +294,6 @@ export default function StockChart({ stock }) {
   const color = isUp ? "#30d158" : "#ff453a";
   const gradId = isUp ? "greenGrad" : "redGrad";
   const open = stock.chartData[0]?.price ?? stock.open;
-  const depthData = chartView === "options" ? optionsDepthData : underlyingDepthData;
 
   return (
     <div className="chart-panel">
@@ -168,17 +322,39 @@ export default function StockChart({ stock }) {
         </div>
       </div>
 
-      {/* Period tabs */}
-      <div className="period-tabs">
-        {PERIODS.map((p) => (
-          <button
-            key={p}
-            className={`period-tab ${period === p ? "period-tab--active" : ""}`}
-            onClick={() => setPeriod(p)}
-          >
-            {p}
+      {/* Period tabs + quick actions row */}
+      <div className="period-tabs-row">
+        <div className="period-tabs">
+          {PERIODS.map((p) => (
+            <button
+              key={p}
+              className={`period-tab ${period === p ? "period-tab--active" : ""}`}
+              onClick={() => setPeriod(p)}
+            >
+              {p}
+            </button>
+          ))}
+        </div>
+        <div className="quick-actions">
+          <button className="quick-action-btn">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="12" cy="12" r="3"/><path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83"/>
+            </svg>
+            Create Entry Bot
           </button>
-        ))}
+          <button className="quick-action-btn">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/><polyline points="16 7 22 7 22 13"/>
+            </svg>
+            Simulate Symbol
+          </button>
+          <button className="quick-action-btn">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+              <rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/>
+            </svg>
+            Explore Option Chains
+          </button>
+        </div>
       </div>
 
       {/* Price Chart */}
@@ -241,7 +417,13 @@ export default function StockChart({ stock }) {
           ))}
         </div>
 
+        {/* Gamma Exposure — full width GEX table */}
+        {section === "Gamma Exposure (GEX)" && (
+          <GEXTable mid={stock.atClose} />
+        )}
+
         {/* Two-column body */}
+        {section !== "Gamma Exposure (GEX)" && (
         <div className="trading-body">
           {/* Left column */}
           <div className="trading-left">
@@ -249,19 +431,37 @@ export default function StockChart({ stock }) {
               <PositionsPanel />
             ) : (
               <>
-                <div className="chart-view-toggle">
-                  <button
-                    className={`cvt-btn ${chartView === "options" ? "cvt-btn--active" : ""}`}
-                    onClick={() => setChartView("options")}
-                  >
-                    Options
-                  </button>
-                  <button
-                    className={`cvt-btn ${chartView === "underlying" ? "cvt-btn--active" : ""}`}
-                    onClick={() => setChartView("underlying")}
-                  >
-                    Underlying
-                  </button>
+                <div className="depth-controls">
+                  <div className="chart-view-toggle">
+                    <button
+                      className={`cvt-btn ${chartView === "options" ? "cvt-btn--active" : ""}`}
+                      onClick={() => setChartView("options")}
+                    >
+                      Options
+                    </button>
+                    <button
+                      className={`cvt-btn ${chartView === "underlying" ? "cvt-btn--active" : ""}`}
+                      onClick={() => setChartView("underlying")}
+                    >
+                      Underlying
+                    </button>
+                  </div>
+                  {chartView === "options" && (
+                    <div className="depth-metric-select-wrap">
+                      <select
+                        className="depth-metric-select"
+                        value={depthMetric}
+                        onChange={(e) => setDepthMetric(e.target.value)}
+                      >
+                        <option value="bid_ask">Bid / Ask Size</option>
+                        <option value="volume">Volume</option>
+                        <option value="open_interest">Open Interest</option>
+                      </select>
+                      <svg className="depth-metric-select__arrow" width="10" height="10" viewBox="0 0 10 10" fill="none">
+                        <path d="M2 3.5l3 3 3-3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                      </svg>
+                    </div>
+                  )}
                 </div>
                 <div className="depth-mid-label">
                   <span className="depth-mid-price">
@@ -291,7 +491,7 @@ export default function StockChart({ stock }) {
                     </div>
                   </div>
                 </div>
-                <DepthChart data={depthData} />
+                <DepthChart data={depthData} metric={activeMetric} />
               </>
             )}
           </div>
@@ -299,6 +499,7 @@ export default function StockChart({ stock }) {
           {/* Right column: Ticker News */}
           <TickerNews />
         </div>
+        )}
       </div>
     </div>
   );
