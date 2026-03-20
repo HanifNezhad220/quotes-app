@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import {
   AreaChart,
   Area,
@@ -11,7 +11,7 @@ import {
 import { newsArticles } from "./data";
 import PositionsPanel from "./PositionsPanel";
 
-const SECTIONS = ["Market Depth", "Positions & Bots", "Gamma Exposure (GEX)"];
+const SECTIONS = ["Gamma Exposure (GEX)", "Positions & Bots", "Market Depth"];
 const PERIODS = ["1D", "1W", "1M", "3M", "6M", "YTD", "1Y", "2Y", "5Y", "10Y", "ALL"];
 
 function genDepthData(mid) {
@@ -195,12 +195,143 @@ function cellBg(value, maxAbs, heatmap) {
     : `rgba(255, 69, 58, ${alpha.toFixed(2)})`;
 }
 
+function generateGEXAnalysis(strike, expiry, value, atmStrike) {
+  const exp = EXPIRATIONS.find(e => e.key === expiry);
+  const absVal = Math.abs(value);
+  const isPositive = value >= 0;
+  const strikeDiff = ((strike - atmStrike) / atmStrike * 100).toFixed(1);
+  const isATM = strike === atmStrike;
+  const isITM = strike < atmStrike;
+  const zone = isATM ? "at-the-money" : isITM ? "in-the-money" : "out-of-the-money";
+  const magnitude = absVal > 10 ? "very large" : absVal > 4 ? "large" : absVal > 1 ? "moderate" : "small";
+  const direction = isPositive ? "positive" : "negative";
+
+  return {
+    summary: isPositive
+      ? `Call gamma dominates at this strike, meaning market makers are net long gamma here.`
+      : `Put gamma dominates at this strike, meaning market makers are net short gamma here.`,
+    what: isPositive
+      ? `A ${direction} GEX of ${value.toFixed(2)}M at $${strike} (${exp?.label}) indicates that dealers hold more call gamma than put gamma. As the underlying approaches this strike, dealers will sell into rallies and buy dips to stay delta-neutral — creating a gravitational pull toward $${strike}.`
+      : `A ${direction} GEX of ${value.toFixed(2)}M at $${strike} (${exp?.label}) indicates that dealers are short gamma here. As price moves toward this strike, dealers must chase the move — selling into drops and buying into rallies — which accelerates and amplifies price movement.`,
+    impact: isPositive
+      ? `Price tends to pin or slow near $${strike}. Expect compressed volatility and mean-reversion behavior around this level ${isATM ? "— particularly significant as this is the current ATM strike" : `(${Math.abs(strikeDiff)}% ${isITM ? "below" : "above"} current price)`}.`
+      : `Price may accelerate through $${strike} if reached. This is a ${magnitude} negative GEX node — the larger the value, the more dealers amplify moves. Volatility tends to expand in this zone.`,
+    magnitude: `${magnitude.charAt(0).toUpperCase() + magnitude.slice(1)} exposure (${value.toFixed(2)}M). The ${zone} position ${isATM ? "makes this the most relevant level to watch." : `places this ${Math.abs(strikeDiff)}% ${strike > atmStrike ? "above" : "below"} spot price.`}`,
+  };
+}
+
+function GEXCellPopover({ strike, expiry, value, flipUp, onClose, onAnalyze }) {
+  const ref = useRef(null);
+  useEffect(() => {
+    function handleClick(e) {
+      if (ref.current && !ref.current.contains(e.target)) onClose();
+    }
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [onClose]);
+
+  const exp = EXPIRATIONS.find(e => e.key === expiry);
+  return (
+    <div className="gex-popover" ref={ref} style={flipUp ? { top: "auto", bottom: "calc(100% + 8px)" } : {}}>
+      <div className="gex-popover__header">
+        <span className="gex-popover__strike">${strike.toLocaleString("en-US", { minimumFractionDigits: 2 })}</span>
+        <span className="gex-popover__expiry">{exp?.label}</span>
+        <span className={`gex-popover__val ${value >= 0 ? "pos" : "neg"}`}>{value >= 0 ? "+" : ""}{value.toFixed(2)}M GEX</span>
+      </div>
+      <div className="gex-popover__actions">
+        <button className="gex-popover__btn">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="12" cy="12" r="3"/><path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83"/>
+          </svg>
+          Create Entry Bot
+        </button>
+        <button className="gex-popover__btn">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+            <polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/><polyline points="16 7 22 7 22 13"/>
+          </svg>
+          Trade
+        </button>
+        <button className="gex-popover__btn gex-popover__btn--ai" onClick={() => { onAnalyze(); onClose(); }}>
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M12 2a10 10 0 1 0 10 10"/><path d="M12 6v6l4 2"/><circle cx="18" cy="5" r="3" fill="currentColor" stroke="none"/>
+          </svg>
+          Analyze with AI
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function GEXAnalysisPanel({ analysis, cell, onClose }) {
+  const exp = EXPIRATIONS.find(e => e.key === cell.expiry);
+  return (
+    <div className="gex-analysis-panel">
+      <div className="gex-analysis-header">
+        <div className="gex-analysis-title">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M12 2a10 10 0 1 0 10 10"/><path d="M12 6v6l4 2"/><circle cx="18" cy="5" r="3" fill="currentColor" stroke="none"/>
+          </svg>
+          AI Analysis
+        </div>
+        <button className="gex-analysis-close" onClick={onClose}>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+            <path d="M18 6L6 18M6 6l12 12"/>
+          </svg>
+        </button>
+      </div>
+
+      <div className="gex-analysis-meta">
+        <span className="gex-analysis-strike">${cell.strike.toLocaleString("en-US", { minimumFractionDigits: 2 })}</span>
+        <span className="gex-analysis-sep">·</span>
+        <span className="gex-analysis-expiry">{exp?.label} {exp?.type}</span>
+        <span className="gex-analysis-sep">·</span>
+        <span className={`gex-analysis-gex ${cell.value >= 0 ? "pos" : "neg"}`}>
+          {cell.value >= 0 ? "+" : ""}{cell.value.toFixed(2)}M GEX
+        </span>
+      </div>
+
+      <div className="gex-analysis-body">
+        <p className="gex-analysis-summary">{analysis.summary}</p>
+
+        <div className="gex-analysis-section">
+          <div className="gex-analysis-section-label">What this means</div>
+          <p>{analysis.what}</p>
+        </div>
+
+        <div className="gex-analysis-section">
+          <div className="gex-analysis-section-label">Price impact</div>
+          <p>{analysis.impact}</p>
+        </div>
+
+        <div className="gex-analysis-section">
+          <div className="gex-analysis-section-label">Magnitude</div>
+          <p>{analysis.magnitude}</p>
+        </div>
+      </div>
+
+      <div className="gex-analysis-footer">
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+          <circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/>
+        </svg>
+        Simulated analysis — connect to AI for real insights
+      </div>
+    </div>
+  );
+}
+
 function GEXTable({ mid }) {
   const { strikes, matrix, maxAbs } = useMemo(() => genGEXMatrix(mid), [mid]);
   const atmStrike = useMemo(() => {
     const step = getStrikeStep(mid);
     return parseFloat((Math.round(mid / step) * step).toFixed(2));
   }, [mid]);
+  const [activeCell, setActiveCell] = useState(null);
+  const [analysisCell, setAnalysisCell] = useState(null);
+
+  const analysis = useMemo(
+    () => analysisCell ? generateGEXAnalysis(analysisCell.strike, analysisCell.expiry, analysisCell.value, atmStrike) : null,
+    [analysisCell, atmStrike]
+  );
 
   return (
     <div className="gex-wrap">
@@ -209,41 +340,82 @@ function GEXTable({ mid }) {
           <span className="gex-legend__pos">▲ Call dominated</span>
           <span className="gex-legend__neg">▼ Put dominated</span>
         </div>
+        <div className="gex-zone-legend">
+          <span className="gex-zone-legend__atm">ATM</span>
+        </div>
       </div>
 
-      <div className="gex-table-wrap">
-        <table className="gex-table">
-          <thead>
-            <tr>
-              <th className="gex-th gex-th--strike">Strike</th>
-              {EXPIRATIONS.map(({ key, label, type }) => (
-                <th key={key} className="gex-th">
-                  <span className="gex-exp-label">{label}</span>
-                  <span className="gex-exp-type">{type}</span>
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {strikes.map((strike) => {
-              const isATM = strike === atmStrike;
-              return (
-                <tr key={strike} className={`gex-tr ${isATM ? "gex-tr--atm" : ""}`}>
-                  <td className="gex-td gex-td--strike">{strike.toLocaleString("en-US")}</td>
-                  {EXPIRATIONS.map(({ key }) => {
-                    const val = matrix[strike][key];
-                    return (
-                      <td key={key} className="gex-td" style={{ background: cellBg(val, maxAbs, false) }}>
-                        {val.toFixed(2)}
-                      </td>
-                    );
-                  })}
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+      <div className={`gex-content ${analysisCell ? "gex-content--split" : ""}`}>
+        <div className="gex-table-wrap" style={{ position: "relative" }}>
+          <table className="gex-table">
+            <thead>
+              <tr>
+                <th className="gex-th gex-th--strike">Strike</th>
+                {EXPIRATIONS.map(({ key, label, type }) => (
+                  <th key={key} className="gex-th">
+                    <span className="gex-exp-label">{label}</span>
+                    <span className="gex-exp-type">{type}</span>
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {strikes.map((strike) => {
+                const isATM = strike === atmStrike;
+                const isITM = strike < atmStrike;
+                const zoneClass = isATM ? "gex-tr--atm" : isITM ? "gex-tr--itm" : "gex-tr--otm";
+                return (
+                  <tr key={strike} className={`gex-tr ${zoneClass}`}>
+                    <td className="gex-td gex-td--strike">
+                      <span className="gex-strike-price">
+                        ${strike.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </span>
+                    </td>
+                    {EXPIRATIONS.map(({ key }) => {
+                      const val = matrix[strike][key];
+                      const isActive = activeCell?.strike === strike && activeCell?.expiry === key;
+                      return (
+                        <td
+                          key={key}
+                          className={`gex-td gex-td--clickable ${isActive ? "gex-td--active" : ""}`}
+                          style={{ background: cellBg(val, maxAbs, false) }}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            const rect = e.currentTarget.getBoundingClientRect();
+                            const flipUp = window.innerHeight - rect.bottom < 200;
+                            setActiveCell(isActive ? null : { strike, expiry: key, value: val, flipUp });
+                          }}
+                        >
+                          {val.toFixed(2)}
+                          {isActive && (
+                            <GEXCellPopover
+                              strike={strike}
+                              expiry={key}
+                              value={val}
+                              flipUp={activeCell?.flipUp}
+                              onClose={() => setActiveCell(null)}
+                              onAnalyze={() => setAnalysisCell({ strike, expiry: key, value: val })}
+                            />
+                          )}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+
+        {analysisCell && analysis && (
+          <GEXAnalysisPanel
+            analysis={analysis}
+            cell={analysisCell}
+            onClose={() => setAnalysisCell(null)}
+          />
+        )}
       </div>
+
       <div className="gex-footnote">Values in $ millions · Net GEX = Calls − Puts · Dummy data</div>
     </div>
   );
@@ -269,7 +441,7 @@ function TickerNews() {
 
 export default function StockChart({ stock }) {
   const [period, setPeriod] = useState("1D");
-  const [section, setSection] = useState("Market Depth");
+  const [section, setSection] = useState("Gamma Exposure (GEX)");
   const [chartView, setChartView] = useState("options");
   const [depthMetric, setDepthMetric] = useState("bid_ask");
 
